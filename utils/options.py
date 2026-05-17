@@ -137,5 +137,28 @@ def args_parser():
     parser.add_argument('--scaling_attack_round', type=int, default=1, help="rounds of attack implements")
     parser.add_argument('--scaling_param', type=float, default=5, help="scaling up how many times")
     parser.add_argument('--p', type=float, default=0.5, help="level of non-iid")
+    parser.add_argument('--rule_bandit_mode', type=str, default='LinUCB',
+                        help="contextual bandit algorithm for rule selection")
+    parser.add_argument('--rule_bandit_rollouts_per_round',
+                        '--rule_rl_rollouts_per_round',
+                        dest='rule_bandit_rollouts_per_round',
+                        type=int, default=100,
+                        help="number of candidate rule evaluations per FL round")
+    parser.add_argument('--rule_bandit_alpha', type=float, default=1.0,
+                        help="UCB exploration coefficient")
+    parser.add_argument('--rule_bandit_nu', type=float, default=1.0,
+                        help="Thompson sampling exploration scale")
+    parser.add_argument('--rule_bandit_lambda', type=float, default=1.0,
+                        help="ridge/prior precision for contextual bandit")
+    parser.add_argument('--rule_bandit_lr', type=float, default=1e-3,
+                        help="learning rate for neural bandit modes")
+    parser.add_argument('--rule_bandit_batch_size', type=int, default=16,
+                        help="minibatch size for neural bandit modes")
+    parser.add_argument('--rule_bandit_hidden_dim', type=int, default=128,
+                        help="hidden dimension for neural bandit modes")
+    parser.add_argument('--rule_bandit_feature_dim', type=int, default=64,
+                        help="feature dimension for NeuralLinear")
+    parser.add_argument('--rule_bandit_train_steps', type=int, default=1,
+                        help="gradient steps per bandit update")
     args = parser.parse_args()
     return args
