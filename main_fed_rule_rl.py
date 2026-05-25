@@ -56,6 +56,121 @@ RULE_RL_STATE_DIM = 14
 RULE_RL_ROLLOUTS_PER_ROUND = 50
 
 
+def to_float(value: Any) -> float:
+    if hasattr(value, "item"):
+        return float(value.item())
+    return float(value)
+
+
+def init_wandb(args: Any, base_info: str, validation_size: int, eval_size: int):
+    if not getattr(args, "wandb", False):
+        return None
+    try:
+        import wandb
+    except ImportError as exc:
+        raise RuntimeError("wandb was requested with --wandb, but wandb is not installed") from exc
+
+    config = {}
+    for key, value in vars(args).items():
+        if isinstance(value, torch.device):
+            value = str(value)
+        config[key] = value
+    config.update(
+        {
+            "validation_size": int(validation_size),
+            "eval_size": int(eval_size),
+            "rule_rl_state_dim": RULE_RL_STATE_DIM,
+        }
+    )
+    return wandb.init(
+        project=args.wandb_project,
+        entity=args.wandb_entity,
+        name=args.wandb_name or base_info,
+        mode=args.wandb_mode,
+        config=config,
+    )
+
+
+def build_wandb_metrics(
+    iter_idx: int,
+    loss_avg: Any,
+    acc_test: Any,
+    back_acc: Any,
+    rule_rl_meta: Dict[str, Any],
+    round_attack_count: int,
+) -> Dict[str, Any]:
+    action = rule_rl_meta["action"]
+    prefiltered = [int(i) for i in rule_rl_meta["prefiltered_clients"]]
+    selected = [int(i) for i in rule_rl_meta["selected_clients"]]
+    num_clients = int(rule_rl_meta["num_clients"])
+    round_attack_count = int(round_attack_count)
+    benign_count = max(num_clients - round_attack_count, 0)
+
+    prefilter_malicious = sum(1 for idx in prefiltered if idx < round_attack_count)
+    final_malicious = sum(1 for idx in selected if idx < round_attack_count)
+    prefilter_benign = len(prefiltered) - prefilter_malicious
+    final_benign = len(selected) - final_malicious
+
+    score_type_id = {"l2_to_center": 0, "cosine_to_center": 1, "knn_distance": 2}
+    center_type_id = {"mean": 0, "median": 1, "medoid": 2, "none": 3}
+
+    metrics: Dict[str, Any] = {
+        "round": int(iter_idx),
+        "train/loss_avg": to_float(loss_avg),
+        "eval/main_accuracy": to_float(acc_test),
+        "eval/backdoor_accuracy": to_float(back_acc),
+        "attack/active": float(round_attack_count > 0),
+        "attack/round_malicious_clients": round_attack_count,
+        "bandit/validation_accuracy": float(rule_rl_meta["validation_accuracy"]),
+        "bandit/baseline_validation_accuracy": float(rule_rl_meta["baseline_validation_accuracy"]),
+        "bandit/reward": float(rule_rl_meta["reward"]),
+        "bandit/rollout_reward_mean": float(rule_rl_meta["rollout_reward_mean"]),
+        "bandit/rollout_reward_max": float(rule_rl_meta["rollout_reward_max"]),
+        "bandit/num_rollouts_executed": int(rule_rl_meta["num_rollouts_executed"]),
+        "bandit/num_transitions_added": int(rule_rl_meta["num_transitions_added"]),
+        "bandit/action_id": int(rule_rl_meta["action_id"]),
+        "bandit/action_score_type_id": score_type_id.get(action["score_type"], -1),
+        "bandit/action_center_type_id": center_type_id.get(action["center_type"], -1),
+        "bandit/action_drop_inner_ratio": float(action["drop_inner_ratio"]),
+        "bandit/action_keep_outer_ratio": float(action["keep_outer_ratio"]),
+        "bandit/action_knn_k": int(action["knn_k"]),
+        "bandit/exploration": float(rule_rl_meta["exploration"]),
+        "bandit/epsilon": float(rule_rl_meta["epsilon"]),
+        "bandit/prefiltered_count": len(prefiltered),
+        "bandit/selected_count": len(selected),
+        "bandit/prefiltered_fraction": len(prefiltered) / max(num_clients, 1),
+        "bandit/selected_fraction": len(selected) / max(num_clients, 1),
+        "defense/prefilter_malicious_survival_count": prefilter_malicious,
+        "defense/final_malicious_survival_count": final_malicious,
+        "defense/prefilter_benign_survival_count": prefilter_benign,
+        "defense/final_benign_selected_count": final_benign,
+        "defense/prefilter_malicious_survival_ratio": (
+            prefilter_malicious / round_attack_count if round_attack_count else 0.0
+        ),
+        "defense/final_malicious_survival_ratio": (
+            final_malicious / round_attack_count if round_attack_count else 0.0
+        ),
+        "defense/prefilter_benign_survival_ratio": (
+            prefilter_benign / benign_count if benign_count else 0.0
+        ),
+        "defense/final_benign_selected_ratio": (
+            final_benign / benign_count if benign_count else 0.0
+        ),
+        "defense/final_malicious_selected_fraction": (
+            final_malicious / len(selected) if selected else 0.0
+        ),
+    }
+
+    metrics["bandit/action_score_type"] = action["score_type"]
+    metrics["bandit/action_center_type"] = action["center_type"]
+    metrics["bandit/bandit_mode"] = rule_rl_meta["bandit_mode"]
+
+    train_metrics = rule_rl_meta.get("train_metrics") or {}
+    for key, value in train_metrics.items():
+        metrics[f"bandit/train_{key}"] = to_float(value)
+    return metrics
+
+
 @dataclass
 class RuleFilterConfig:
     """Conservative multi-Krum prefilter with a min-keep floor."""
@@ -641,6 +756,7 @@ def main() -> None:
 
     base_info = get_base_info(args)
     filename = "./" + args.save + "/accuracy_file_{}.txt".format(base_info)
+    wandb_run = init_wandb(args, base_info, len(central_dataset), len(eval_indices))
 
     val_acc_list = [0.0001]
     backdoor_acculist = [0]
@@ -670,6 +786,8 @@ def main() -> None:
                 attack_number = attack_number
             else:
                 attack_number = 0
+
+        round_attack_count = attack_number
 
         for _, idx in enumerate(idxs_users):
             if attack_number > 0:
@@ -728,10 +846,19 @@ def main() -> None:
         loss_train.append(loss_avg)
 
         acc_test, _, back_acc = test_img(net_glob, dataset_eval, args, test_backdoor=True)
-        print("Main accuracy: {:.2f}".format(acc_test))
-        print("Backdoor accuracy: {:.2f}".format(back_acc))
-        val_acc_list.append(acc_test.item() if hasattr(acc_test, "item") else acc_test)
-        backdoor_acculist.append(back_acc)
+        main_acc = to_float(acc_test)
+        backdoor_acc = to_float(back_acc)
+        print("Main accuracy: {:.2f}".format(main_acc))
+        print("Backdoor accuracy: {:.2f}".format(backdoor_acc))
+        val_acc_list.append(main_acc)
+        backdoor_acculist.append(backdoor_acc)
+        if wandb_run is not None:
+            wandb_run.log(
+                build_wandb_metrics(
+                    iter_idx, loss_avg, main_acc, backdoor_acc, rule_rl_meta, round_attack_count
+                ),
+                step=iter_idx,
+            )
         write_file(filename, val_acc_list, backdoor_acculist, args)
 
     best_acc, absr, bbsr = write_file(filename, val_acc_list, backdoor_acculist, args, True)
@@ -753,8 +880,28 @@ def main() -> None:
     net_glob.eval()
     acc_train, _ = test_img(net_glob, dataset_train, args)
     acc_test, _ = test_img(net_glob, dataset_eval, args)
-    print("Training accuracy: {:.2f}".format(acc_train))
-    print("Testing accuracy: {:.2f}".format(acc_test))
+    final_train_acc = to_float(acc_train)
+    final_test_acc = to_float(acc_test)
+    print("Training accuracy: {:.2f}".format(final_train_acc))
+    print("Testing accuracy: {:.2f}".format(final_test_acc))
+
+    if wandb_run is not None:
+        wandb_run.log(
+            {
+                "final/train_accuracy": final_train_acc,
+                "final/test_accuracy": final_test_acc,
+                "final/best_main_accuracy": to_float(best_acc),
+                "final/absr": to_float(absr),
+                "final/bbsr": to_float(bbsr),
+            },
+            step=args.epochs,
+        )
+        wandb_run.summary["best_main_accuracy"] = to_float(best_acc)
+        wandb_run.summary["absr"] = to_float(absr)
+        wandb_run.summary["bbsr"] = to_float(bbsr)
+        wandb_run.summary["final_train_accuracy"] = final_train_acc
+        wandb_run.summary["final_test_accuracy"] = final_test_acc
+        wandb_run.finish()
 
     torch.save(net_glob.state_dict(), "./" + args.save + "/model.pth")
 

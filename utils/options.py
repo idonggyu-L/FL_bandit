@@ -160,5 +160,16 @@ def args_parser():
                         help="feature dimension for NeuralLinear")
     parser.add_argument('--rule_bandit_train_steps', type=int, default=1,
                         help="gradient steps per bandit update")
+    parser.add_argument("--wandb", action="store_true",
+                        help="log rule_rl metrics to Weights & Biases")
+    parser.add_argument("--wandb_project", type=str, default="poisoning-backdoor-rule-rl",
+                        help="Weights & Biases project name")
+    parser.add_argument("--wandb_entity", type=str, default=None,
+                        help="Weights & Biases entity/team name")
+    parser.add_argument("--wandb_name", type=str, default=None,
+                        help="Weights & Biases run name")
+    parser.add_argument("--wandb_mode", type=str, default="online",
+                        choices=["online", "offline", "disabled"],
+                        help="Weights & Biases logging mode")
     args = parser.parse_args()
     return args
