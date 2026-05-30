@@ -143,7 +143,28 @@ def args_parser():
                         '--rule_rl_rollouts_per_round',
                         dest='rule_bandit_rollouts_per_round',
                         type=int, default=100,
-                        help="number of candidate rule evaluations per FL round")
+                        help="(legacy) number of candidate rule evaluations per FL round")
+    parser.add_argument('--rule_bandit_evals_per_round', type=int, default=1,
+                        help="true-bandit exploration budget: number of exploratory "
+                             "rule evaluations (and learning updates) per FL round")
+    parser.add_argument('--trigger_probe', action='store_true', default=False,
+                        help="stage-2 via trigger probing (RL action = probe trigger) instead of embedding rules")
+    parser.add_argument('--trigger_probe_step', type=int, default=6,
+                        help="grid stride (pixels) for probe trigger positions")
+    parser.add_argument('--trigger_probe_sizes', type=int, nargs='+', default=[5],
+                        help="probe trigger square sizes")
+    parser.add_argument('--trigger_probe_evals', type=int, default=0,
+                        help="trigger-probe exploration budget per round (0 = exhaustive/all probes)")
+    parser.add_argument('--trigger_stage1', dest='trigger_stage1', action='store_true', default=True,
+                        help="enable stage-1 multi-Krum prefilter before trigger probing")
+    parser.add_argument('--no_trigger_stage1', dest='trigger_stage1', action='store_false',
+                        help="disable the stage-1 multi-Krum prefilter")
+    parser.add_argument('--rule_bandit_diag', dest='rule_bandit_diag',
+                        action='store_true', default=True,
+                        help="log trigger-free per-class confidence diagnostics each round")
+    parser.add_argument('--no_rule_bandit_diag', dest='rule_bandit_diag',
+                        action='store_false',
+                        help="disable the rule_bandit class-confidence diagnostics")
     parser.add_argument('--rule_bandit_alpha', type=float, default=1.0,
                         help="UCB exploration coefficient")
     parser.add_argument('--rule_bandit_nu', type=float, default=1.0,
@@ -160,6 +181,10 @@ def args_parser():
                         help="feature dimension for NeuralLinear")
     parser.add_argument('--rule_bandit_train_steps', type=int, default=1,
                         help="gradient steps per bandit update")
+    parser.add_argument('--rule_bandit_proto_weight', type=float, default=1.0,
+                        help="weight of the prototype-separation term in the stage-2 "
+                             "reward (reward = acc_delta + weight * separation_delta; "
+                             "0 recovers the pure-accuracy bandit)")
     parser.add_argument("--wandb", action="store_true",
                         help="log rule_rl metrics to Weights & Biases")
     parser.add_argument("--wandb_project", type=str, default="poisoning-backdoor-rule-rl",
